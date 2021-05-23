@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "j2templater"
+version = "0.1.0"
+description = ""
+authors = ["Eduardo Dobay <edudobay@gmail.com>"]
+packages = [
+    { include = "image_templates.py" }
+]
+
+[tool.poetry.scripts]
+j2templater = "image_templates:main"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+Jinja2 = ">=2"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

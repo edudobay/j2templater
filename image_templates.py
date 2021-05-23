@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Iterable, List, Sequence, Set
 
 import jinja2
-import pytest
 
 ROOT_DIR = Path(os.path.dirname(__file__))
 os.chdir(ROOT_DIR)
@@ -25,20 +24,6 @@ class Context:
 
 # --------------------------------------------------------------------------------------------------
 
-@pytest.fixture
-def context() -> Context:
-    import tempfile
-    tempdir = tempfile.TemporaryDirectory()
-    with tempdir:
-        yield Context(
-            images_dir=ROOT_DIR / 'tests/fixtures',
-            output_dir=(Path(tempdir.name)),
-        )
-
-
-# --------------------------------------------------------------------------------------------------
-
-
 def find_templated_source_dirs(context: Context) -> Iterable[Path]:
     for image in context.images_dir.iterdir():
         if not image.name.endswith('.in'):
@@ -47,16 +32,7 @@ def find_templated_source_dirs(context: Context) -> Iterable[Path]:
         yield image
 
 
-def test_templated_source_dirs(context: Context):
-    source_dirs = sorted(
-        str(_dir.relative_to(context.images_dir))
-        for _dir in find_templated_source_dirs(context)
-    )
-
-    assert source_dirs == ['node.in', 'php.in']
-
 # --------------------------------------------------------------------------------------------------
-
 
 def render_templated_dir(source: Path, destination: Path, context: dict) -> None:
     SPECIAL_FILES = {
@@ -91,24 +67,7 @@ def render_templated_dir(source: Path, destination: Path, context: dict) -> None
             template_file.unlink()
 
 
-def test_render_templated_dir(context: Context):
-    source = context.images_dir / 'php.in'
-    dest = context.output_dir / 'php_test.generated'
-
-    if dest.is_dir():
-        shutil.rmtree(dest)
-
-    context = {'php_version': '8.0'}
-    render_templated_dir(source, dest, context)
-
-    file = dest / 'Dockerfile'
-    assert file.is_file(), f"File should exist: {file}"
-
-    contents = open(file).read()
-    assert contents.startswith('FROM php:8.0-fpm-alpine\n')
-
 # --------------------------------------------------------------------------------------------------
-
 
 @dataclass
 class TemplatedImage:
@@ -154,28 +113,7 @@ def find_templated_images(context: Context) -> Iterable[TemplatedImage]:
             )
 
 
-def test_find_templates_to_render_and_contexts(context: Context):
-    for t in find_templated_images(context):
-        render_templated_dir(
-            t.source_dir,
-            t.destination_dir.with_name(t.destination_dir.name + '_test.generated'),
-            t.context
-        )
-
-    image_dir = context.output_dir / 'php80_test.generated'
-    assert image_dir.is_dir(), f"Directory should exist: {image_dir}"
-
-    template_ini = image_dir / 'template.ini'
-    assert not template_ini.exists(), f"File should not exist: {template_ini}"
-
-    dockerfile = image_dir / 'Dockerfile'
-    assert dockerfile.is_file(), f"File should exist: {dockerfile}"
-    contents = open(dockerfile).read()
-    assert contents.startswith('FROM php:8.0-fpm-alpine\n')
-
-
 # --------------------------------------------------------------------------------------------------
-
 
 def handler_generate(args, context):
     def ignore(template: TemplatedImage) -> bool:

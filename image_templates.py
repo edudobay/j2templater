@@ -9,28 +9,51 @@ from pathlib import Path
 from typing import Iterable, List, Sequence, Set
 
 import jinja2
+import pytest
 
 ROOT_DIR = Path(os.path.dirname(__file__))
 os.chdir(ROOT_DIR)
 
+
+# --------------------------------------------------------------------------------------------------
+
+@dataclass
+class Context:
+    images_dir: Path
+    output_dir: Path
+
+
+# --------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def context() -> Context:
+    import tempfile
+    tempdir = tempfile.TemporaryDirectory()
+    with tempdir:
+        yield Context(
+            images_dir=ROOT_DIR / 'tests/fixtures',
+            output_dir=(Path(tempdir.name)),
+        )
+
+
 # --------------------------------------------------------------------------------------------------
 
 
-def find_templated_source_dirs() -> Iterable[Path]:
-    for image in (ROOT_DIR / 'images').iterdir():
+def find_templated_source_dirs(context: Context) -> Iterable[Path]:
+    for image in context.images_dir.iterdir():
         if not image.name.endswith('.in'):
             continue
 
         yield image
 
 
-def test_templated_source_dirs():
+def test_templated_source_dirs(context: Context):
     source_dirs = sorted(
-        str(_dir.relative_to(ROOT_DIR / 'images'))
-        for _dir in find_templated_source_dirs()
+        str(_dir.relative_to(context.images_dir))
+        for _dir in find_templated_source_dirs(context)
     )
 
-    assert source_dirs == ['php-noroot.in', 'php.in']
+    assert source_dirs == ['node.in', 'php.in']
 
 # --------------------------------------------------------------------------------------------------
 
@@ -68,9 +91,9 @@ def render_templated_dir(source: Path, destination: Path, context: dict) -> None
             template_file.unlink()
 
 
-def test_render_templated_dir():
-    source = ROOT_DIR / 'images/php.in'
-    dest = ROOT_DIR / 'images/php_test.generated'
+def test_render_templated_dir(context: Context):
+    source = context.images_dir / 'php.in'
+    dest = context.output_dir / 'php_test.generated'
 
     if dest.is_dir():
         shutil.rmtree(dest)
@@ -80,7 +103,9 @@ def test_render_templated_dir():
 
     file = dest / 'Dockerfile'
     assert file.is_file(), f"File should exist: {file}"
-    assert open(file).read().startswith('FROM php:8.0-fpm-alpine\n')
+
+    contents = open(file).read()
+    assert contents.startswith('FROM php:8.0-fpm-alpine\n')
 
 # --------------------------------------------------------------------------------------------------
 
@@ -99,10 +124,11 @@ class TemplatedImage:
         return self.context.get(self.CTX_IMAGE_NAME)
 
 
-def find_templated_images() -> Iterable[TemplatedImage]:
+def find_templated_images(context: Context) -> Iterable[TemplatedImage]:
     IMAGE_SECTION_PREFIX = 'image.'
+    output_dir = context.output_dir
 
-    for source_dir in find_templated_source_dirs():
+    for source_dir in find_templated_source_dirs(context):
         config = ConfigParser()
         config.read(source_dir / 'template.ini')
 
@@ -119,7 +145,7 @@ def find_templated_images() -> Iterable[TemplatedImage]:
             context = dict(**section)
             context[TemplatedImage.CTX_IMAGE_NAME] = image_name
 
-            destination_dir = source_dir.parent / image_name
+            destination_dir = output_dir / image_name
 
             yield TemplatedImage(
                 source_dir=source_dir,
@@ -128,33 +154,35 @@ def find_templated_images() -> Iterable[TemplatedImage]:
             )
 
 
-def test_find_templates_to_render_and_contexts():
-    for t in find_templated_images():
+def test_find_templates_to_render_and_contexts(context: Context):
+    for t in find_templated_images(context):
         render_templated_dir(
             t.source_dir,
             t.destination_dir.with_name(t.destination_dir.name + '_test.generated'),
             t.context
         )
 
-    image_dir = ROOT_DIR / 'images/php80_test.generated'
+    image_dir = context.output_dir / 'php80_test.generated'
+    assert image_dir.is_dir(), f"Directory should exist: {image_dir}"
 
     template_ini = image_dir / 'template.ini'
     assert not template_ini.exists(), f"File should not exist: {template_ini}"
 
     dockerfile = image_dir / 'Dockerfile'
     assert dockerfile.is_file(), f"File should exist: {dockerfile}"
-    assert open(dockerfile).read().startswith('FROM php:8.0-fpm-alpine\n')
+    contents = open(dockerfile).read()
+    assert contents.startswith('FROM php:8.0-fpm-alpine\n')
 
 
 # --------------------------------------------------------------------------------------------------
 
 
-def handler_generate(args):
+def handler_generate(args, context):
     def ignore(template: TemplatedImage) -> bool:
         return args.only is not None \
                and template.image_name not in args.only
 
-    for t in find_templated_images():
+    for t in find_templated_images(context):
         if ignore(t):
             continue
 
@@ -183,11 +211,17 @@ def main():
                         help="force removing and rebuilding images that already exist")
     parser.add_argument('--suffix', default='.generated')
     parser.add_argument('--only', type=comma_separated_set, default=None)
+    parser.add_argument('--output-dir', '-o', metavar='DIR', required=True)
     args = parser.parse_args()
+
+    context = Context(
+        images_dir=ROOT_DIR,  # TODO
+        output_dir=Path(args.output_dir),
+    )
 
     if args.handler:
         handler = globals()['handler_' + args.handler]
-        handler(args)
+        handler(args, context)
     else:
         raise ValueError('missing command')
 
